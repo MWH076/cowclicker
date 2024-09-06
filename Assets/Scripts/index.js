@@ -155,3 +155,12 @@ function displayLeaderboard(leaderboard) {
         </tr>`;
     });
 }
+
+// Debugging initialization
+console.log(firebase); // Check if firebase object exists
+
+firebase.initializeApp(firebaseConfig);
+
+// Debugging Firebase auth and database
+console.log(firebase.auth());
+console.log(firebase.database());
