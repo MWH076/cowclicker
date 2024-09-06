@@ -8,159 +8,153 @@ const firebaseConfig = {
     appId: "1:787128420241:web:ee86c36cb0dda77e733c30"
 };
 
+// Initialize Firebase
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.database();
 
-let progress = 0;
-let milkPerClick = 10;
+let userId, userRef;
+let milkCollected = 0;
+let coins = 0;
+let farmerLevel = 0;
+let farmerMilkPerSec = 0;
+let intervalId;
 
-function signInWithGoogle() {
-    const provider = new firebase.auth.GoogleAuthProvider();
-    auth.signInWithPopup(provider).then(result => {
-        const user = result.user;
-        checkIfNewUser(user);
-    }).catch(error => {
-        console.error('Google Sign-In Error', error);
-    });
-}
+// Handle Google Auth Login
+const loginBtn = document.getElementById('login-btn');
+const gameSection = document.getElementById('game-section');
+const authSection = document.getElementById('auth-section');
+const usernameDisplay = document.getElementById('username-display');
+const leaderboardList = document.getElementById('leaderboard');
 
-function checkIfNewUser(user) {
-    const userRef = db.ref(`/users/${user.uid}`);
-    userRef.once('value').then(snapshot => {
-        if (snapshot.exists()) {
-            startGame(user.uid);
-        } else {
-            promptForUsername(user.uid);
-        }
-    });
-}
+// Handle user login
+loginBtn.addEventListener('click', () => {
+    auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()).then((result) => {
+        userId = result.user.uid;
+        userRef = db.ref('users/' + userId);
 
-function promptForUsername(uid) {
-    const username = prompt('Create a unique username (3-32 characters):');
-    if (username.length >= 3 && username.length <= 32) {
-        db.ref('/users').orderByChild('username').equalTo(username).once('value', snapshot => {
-            if (snapshot.exists()) {
-                alert('Username already taken! Try a different one.');
-                promptForUsername(uid);
+        // Check if user has a username set
+        userRef.once('value', (snapshot) => {
+            const userData = snapshot.val();
+            if (userData && userData.username) {
+                initGame(userData.username);
             } else {
-                db.ref(`/users/${uid}`).set({
-                    username: username,
-                    totalMilk: 0,
-                    coins: 0,
-                    farmerLevel: 1,
-                    farmerName: "Default Farmer",
-                    farmerUpgradeProgress: 0,
-                    lastUpdateTime: firebase.database.ServerValue.TIMESTAMP
-                });
-                startGame(uid);
+                promptUsername();
+            }
+        });
+    }).catch((error) => {
+        console.error('Login failed:', error);
+    });
+});
+
+// Prompt username input
+function promptUsername() {
+    const username = prompt('Please enter your username (3-32 chars):');
+    if (username.length >= 3 && username.length <= 32) {
+        db.ref('usernames').once('value', (snapshot) => {
+            if (snapshot.hasChild(username)) {
+                alert('Username already taken!');
+                promptUsername();
+            } else {
+                // Save username to Firebase
+                db.ref('usernames/' + username).set(userId);
+                userRef.set({ username, milkCollected, coins, farmerLevel, farmerName: '' });
+                initGame(username);
             }
         });
     } else {
-        alert('Invalid username. Must be 3-32 characters.');
-        promptForUsername(uid);
+        alert('Invalid username length!');
+        promptUsername();
     }
 }
 
-function startGame(uid) {
-    document.getElementById('gameSection').style.display = 'block';
-    loadLeaderboard();
-    startAutoMilk(uid);
+// Initialize game
+function initGame(username) {
+    authSection.classList.add('d-none');
+    gameSection.classList.remove('d-none');
+    usernameDisplay.innerHTML = username;
+
+    // Load user data
+    userRef.on('value', (snapshot) => {
+        const data = snapshot.val();
+        milkCollected = data.milkCollected || 0;
+        coins = data.coins || 0;
+        farmerLevel = data.farmerLevel || 0;
+        farmerMilkPerSec = farmerLevel * 1;  // Each level adds 1 milk per second
+        updateDisplay();
+    });
+
+    startFarmer();
+    updateLeaderboard();
 }
 
-function milkCow() {
-    if (progress < 100) {
-        progress += milkPerClick;
-        if (progress >= 100) {
-            progress = 0;
-            collectMilk();
-        }
-        document.getElementById('milkProgress').style.width = `${progress}%`;
+// Update display
+function updateDisplay() {
+    document.getElementById('milk-count').innerText = milkCollected;
+    document.getElementById('coins-count').innerText = coins;
+    document.getElementById('farmer-level').innerText = farmerLevel;
+    document.getElementById('milk-per-sec').innerText = farmerMilkPerSec;
+}
+
+// Cow click event
+document.getElementById('cow-clicker').addEventListener('click', () => {
+    milkCollected++;
+    document.getElementById('milk-count').innerText = milkCollected;
+    if (milkCollected % 100 === 0) {
+        coins += 10;
+        document.getElementById('coins-count').innerText = coins;
+    }
+    userRef.update({ milkCollected, coins });
+});
+
+// Buy farmer upgrade
+document.getElementById('buy-farmer-btn').addEventListener('click', () => {
+    if (coins >= 10) {
+        coins -= 10;
+        farmerLevel++;
+        farmerMilkPerSec = farmerLevel * 1;
+        userRef.update({ coins, farmerLevel });
+        updateDisplay();
+        startFarmer();
+    } else {
+        alert('Not enough coins!');
+    }
+});
+
+// Set farmer name
+document.getElementById('set-farmer-name-btn').addEventListener('click', () => {
+    const farmerName = document.getElementById('farmer-name').value;
+    if (farmerName.length >= 3 && farmerName.length <= 32) {
+        userRef.update({ farmerName });
+        alert('Farmer name set!');
+    } else {
+        alert('Invalid name length!');
+    }
+});
+
+// Start farmer automation
+function startFarmer() {
+    if (intervalId) clearInterval(intervalId);
+    if (farmerMilkPerSec > 0) {
+        intervalId = setInterval(() => {
+            milkCollected += farmerMilkPerSec;
+            document.getElementById('milk-count').innerText = milkCollected;
+            if (milkCollected % 100 === 0) {
+                coins += 10;
+                document.getElementById('coins-count').innerText = coins;
+            }
+            userRef.update({ milkCollected, coins });
+        }, 1000);
     }
 }
 
-function collectMilk() {
-    const userId = auth.currentUser.uid;
-    const userRef = db.ref(`/users/${userId}`);
-    userRef.transaction(user => {
-        if (user) {
-            const milkEarned = 5;
-            const coinsEarned = 10;
-            user.totalMilk += milkEarned;
-            user.coins += coinsEarned;
-        }
-        return user;
-    });
-}
-
-function startAutoMilk(userId) {
-    setInterval(() => {
-        const userRef = db.ref(`/users/${userId}`);
-        userRef.transaction(user => {
-            if (user) {
-                const milkPerSecond = user.farmerLevel;
-                user.totalMilk += milkPerSecond;
-                user.lastUpdateTime = firebase.database.ServerValue.TIMESTAMP;
-            }
-            return user;
+// Update leaderboard
+function updateLeaderboard() {
+    db.ref('users').orderByChild('milkCollected').limitToLast(10).on('value', (snapshot) => {
+        leaderboardList.innerHTML = '';
+        snapshot.forEach((childSnapshot) => {
+            const data = childSnapshot.val();
+            leaderboardList.innerHTML += `<li>${data.username}: ${data.milkCollected} liters</li>`;
         });
-    }, 1000);
-}
-
-function upgradeFarmer() {
-    const userId = auth.currentUser.uid;
-    const userRef = db.ref(`/users/${userId}`);
-    userRef.transaction(user => {
-        if (user && user.coins > 0) {
-            const upgradeCost = 20 * Math.pow(2, user.farmerLevel - 1);
-            const remainingCost = upgradeCost - user.farmerUpgradeProgress;
-
-            if (user.coins >= remainingCost) {
-                user.coins -= remainingCost;
-                user.farmerLevel += 1;
-                user.farmerUpgradeProgress = 0;
-            } else {
-                user.farmerUpgradeProgress += user.coins;
-                user.coins = 0;
-            }
-        }
-        return user;
     });
 }
-
-function loadLeaderboard() {
-    db.ref('/users')
-        .orderByChild('totalMilk')
-        .limitToLast(10)
-        .once('value', (snapshot) => {
-            const leaderboard = [];
-            snapshot.forEach(childSnapshot => {
-                leaderboard.push({
-                    username: childSnapshot.val().username,
-                    totalMilk: childSnapshot.val().totalMilk
-                });
-            });
-            displayLeaderboard(leaderboard.reverse());
-        });
-}
-
-function displayLeaderboard(leaderboard) {
-    const leaderboardTable = document.getElementById('leaderboard').getElementsByTagName('tbody')[0];
-    leaderboardTable.innerHTML = '';
-    leaderboard.forEach((user, index) => {
-        leaderboardTable.innerHTML += `<tr>
-          <td>${index + 1}</td>
-          <td>${user.username}</td>
-          <td>${user.totalMilk} liters</td>
-        </tr>`;
-    });
-}
-
-// Debugging initialization
-console.log(firebase); // Check if firebase object exists
-
-firebase.initializeApp(firebaseConfig);
-
-// Debugging Firebase auth and database
-console.log(firebase.auth());
-console.log(firebase.database());
