@@ -149,9 +149,9 @@ function displayLeaderboard(leaderboard) {
     leaderboardTable.innerHTML = '';
     leaderboard.forEach((user, index) => {
         leaderboardTable.innerHTML += `<tr>
-        <td>${index + 1}</td>
-        <td>${user.username}</td>
-        <td>${user.totalMilk} liters</td>
-      </tr>`;
+          <td>${index + 1}</td>
+          <td>${user.username}</td>
+          <td>${user.totalMilk} liters</td>
+        </tr>`;
     });
 }
